@@ -63,6 +63,87 @@ O detalhamento de cada funcionalidade e dos endpoints da API aparece na seção 
 
 > **Observação:** a documentação de engenharia sugere opções como React e Recharts na abordagem técnica das histórias. A implementação atual optou por uma interface simples em HTML/JS puro, incluindo um gráfico de barras desenhado com CSS, sem dependências adicionais no front-end.
 
-<!-- ETAPA 2: Como rodar na sua máquina (instalação e execução) -->
+---
+
+## Como executar localmente
+
+### Pré-requisitos
+
+| Ferramenta | Versão | Como verificar |
+| :--- | :--- | :--- |
+| [Node.js](https://nodejs.org/) | **22 ou superior** (exigência do `better-sqlite3`) | `node -v` |
+| npm | Já vem instalado com o Node.js | `npm -v` |
+| [Git](https://git-scm.com/) | Qualquer versão recente (opcional, só para clonar) | `git --version` |
+
+Não é necessário instalar nenhum banco de dados: o SQLite roda embutido na aplicação e os dados ficam em um arquivo local.
+
+### Passo a passo
+
+**1. Clone o repositório e entre na pasta do projeto**
+
+```bash
+git clone https://github.com/<EARNascimento>/sistema-crm.git
+cd sistema-crm/crm-mvp
+```
+
+> Substitua `<seu-usuario>` pelo usuário (ou organização) dono do repositório. Se você baixou o `.zip` pelo GitHub, extraia-o e entre na pasta `crm-mvp`.
+
+**2. Instale as dependências**
+
+```bash
+npm install
+```
+
+Se esse comando falhar com erros do `node-gyp`, veja a [solução de problemas](#solução-de-problemas) logo abaixo. Há uma alternativa simples.
+
+**3. Inicie o servidor**
+
+```bash
+node server.js
+```
+
+O terminal deve exibir:
+
+```text
+Servidor CRM completo rodando em http://localhost:3000
+```
+
+**4. Acesse a aplicação**
+
+Abra [http://localhost:3000](http://localhost:3000) no navegador. O próprio servidor entrega a interface e a API, então não há um segundo processo para iniciar.
+
+Use o usuário de demonstração, criado automaticamente na primeira execução:
+
+| Campo | Valor |
+| :--- | :--- |
+| E-mail | `admin@crm.com` |
+| Senha | `123456` |
+
+Para encerrar o servidor, pressione `Ctrl + C` no terminal.
+
+### Banco de dados
+
+- Na primeira execução, o arquivo **`crm.db`** é criado automaticamente com as tabelas `users`, `customers`, `deals` e `interactions`, além do usuário de demonstração. O banco começa sem clientes, oportunidades ou interações.
+- O arquivo é criado **na pasta de onde o comando `node` foi executado**. Por isso, execute sempre de dentro de `crm-mvp`. Se você rodar `node crm-mvp/server.js` a partir da raiz do repositório, um segundo `crm.db` será criado na raiz e você terá dois bancos diferentes sem perceber.
+- **Para zerar os dados:** pare o servidor, apague o arquivo `crm.db` (e, se existirem, `crm.db-wal` e `crm.db-shm`) e inicie o servidor novamente.
+
+### Configurações fixas no código
+
+Esta versão do MVP não usa variáveis de ambiente. Os valores abaixo ficam no início do `server.js`:
+
+| Configuração | Valor atual | Observação |
+| :--- | :--- | :--- |
+| Porta | `3000` | Para mudar, edite a constante `PORT` |
+| Segredo do JWT | definido no código (`JWT_SECRET`) | Adequado apenas para demonstração; veja [Limitações conhecidas](#limitações-conhecidas) |
+
+### Solução de problemas
+
+| Sintoma | Causa provável | O que fazer |
+| :--- | :--- | :--- |
+| `npm install` falha com erros de `node-gyp` ou tenta compilar o `better-sqlite3` | Com o `package-lock.json` do repositório, o npm pode tentar compilar o módulo nativo em vez de usar o binário pré-compilado que o pacote já traz. A compilação exige Python e um compilador C++ e acesso à internet | Rode `npm install --ignore-scripts`. Nenhuma outra dependência do projeto precisa de script de instalação, e o `better-sqlite3` funciona normalmente com o binário que acompanha o pacote |
+| Erro ao iniciar mencionando versão do Node ou módulo nativo incompatível | Node.js anterior à versão 22 | Atualize o Node.js, apague a pasta `node_modules` e rode `npm install` novamente |
+| O terminal mostra "rodando em http://localhost:3000", mas o sistema não reflete suas alterações ou parece ser outra versão | A porta 3000 já está em uso por outra instância do servidor ou por outro programa. O código imprime a mensagem de sucesso mesmo quando não consegue abrir a porta | Feche a instância anterior (ou o programa que usa a porta) e inicie novamente. Também é possível trocar a constante `PORT` |
+| Os clientes e negócios cadastrados "sumiram" depois de iniciar o servidor de outra pasta | Um novo `crm.db` (vazio, apenas com o usuário demo) foi criado no outro diretório | Execute sempre de dentro de `crm-mvp` e, se necessário, localize o `crm.db` original |
+| A API responde `401` depois de várias horas de uso | O token JWT vale 8 horas | Faça login novamente |
 <!-- ETAPA 3: Funcionalidades e referência da API -->
 <!-- ETAPA 5: Estrutura do projeto, modelo de dados, limitações e próximos passos -->
