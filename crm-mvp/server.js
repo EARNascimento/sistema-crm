@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const db = new Database('crm.db');
 
-// Inicialização das Tabelas (Etapas 1, 2 e 3)
+// Inicialização das Tabelas (Todas as Sprints 1 a 4)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,7 +184,7 @@ app.put('/api/customers/:id', authMiddleware, (req, res) => {
   return res.status(200).json(updated);
 });
 
-// --- US04 & US05: Oportunidades e Movimentação do Pipeline (Kanban) ---
+// --- US04 & US05: Oportunidades e Kanban ---
 app.get('/api/deals', authMiddleware, (req, res) => {
   const deals = db.prepare(`
     SELECT d.*, c.name as customer_name, c.company as customer_company, c.status as customer_status
@@ -228,7 +228,6 @@ app.post('/api/deals', authMiddleware, (req, res) => {
   return res.status(201).json(newDeal);
 });
 
-// US05: Atualização de estágio no Kanban com Transação Atómica (RN01 e RN02)
 app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
   const { id } = req.params;
   const { stage } = req.body;
@@ -251,7 +250,6 @@ app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
     return res.status(404).json({ error: 'Oportunidade não encontrada.' });
   }
 
-  // Abordagem Técnica US05: Transaction atómica para atualizar oportunidade + converter LEAD -> ATIVO
   const updateStageTransaction = db.transaction((dealId, newStage, customerId) => {
     db.prepare('UPDATE deals SET stage = ? WHERE id = ?').run(newStage, dealId);
 
@@ -275,11 +273,9 @@ app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
   });
 });
 
-// --- US06: Histórico de Interações e Follow-up (Timeline) ---
+// --- US06: Histórico de Interações (Timeline) ---
 app.get('/api/customers/:id/interactions', authMiddleware, (req, res) => {
   const { id } = req.params;
-
-  // RN02 US06: Ordenação cronológica reversa (do mais recente para o mais antigo)
   const interactions = db.prepare(`
     SELECT i.*, u.name as author_name
     FROM interactions i
@@ -295,7 +291,6 @@ app.post('/api/customers/:id/interactions', authMiddleware, (req, res) => {
   const { id } = req.params;
   const { type, description } = req.body;
 
-  // RN01 US06: Tipo válido e descrição obrigatória
   const allowedTypes = ['LIGACAO', 'REUNIAO', 'EMAIL', 'NOTA'];
   if (!type || !allowedTypes.includes(type)) {
     return res.status(400).json({ error: 'Tipo de interação inválido. Use LIGACAO, REUNIAO, EMAIL ou NOTA.' });
@@ -326,6 +321,94 @@ app.post('/api/customers/:id/interactions', authMiddleware, (req, res) => {
   return res.status(201).json(newInteraction);
 });
 
+// --- US07: Dashboard Gerencial e KPIs de Vendas ---
+app.get('/api/dashboard/summary', authMiddleware, (req, res) => {
+  // Total de Clientes
+  const totalCustomersRow = db.prepare('SELECT COUNT(*) as total FROM customers').get();
+  const totalCustomers = totalCustomersRow ? totalCustomersRow.total : 0;
+
+  // Agregação por estágio (SUM, COUNT, GROUP BY)
+  const stageRows = db.prepare(`
+    SELECT stage, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
+    FROM deals
+    GROUP BY stage
+  `).all();
+
+  const allStages = [
+    'PROSPECCAO',
+    'QUALIFICACAO',
+    'PROPOSTA',
+    'NEGOCIACAO',
+    'FECHADO_GANHO',
+    'FECHADO_PERDIDO'
+  ];
+
+  const byStage = {};
+  allStages.forEach(st => {
+    byStage[st] = { count: 0, total_value: 0 };
+  });
+
+  stageRows.forEach(r => {
+    if (byStage[r.stage]) {
+      byStage[r.stage] = {
+        count: Number(r.count || 0),
+        total_value: Number(r.total_value || 0)
+      };
+    }
+  });
+
+  // RN01 US07: Receita Ganha = soma de FECHADO_GANHO
+  const wonRevenue = byStage['FECHADO_GANHO'].total_value;
+
+  // RN02 US07: Pipeline em Aberto = soma de PROSPECCAO até NEGOCIACAO
+  const openPipeline =
+    byStage['PROSPECCAO'].total_value +
+    byStage['QUALIFICACAO'].total_value +
+    byStage['PROPOSTA'].total_value +
+    byStage['NEGOCIACAO'].total_value;
+
+  // RN03 e CA02 US07: Taxa de Conversão (%) protegida contra divisão por zero (NaN)
+  const wonCount = byStage['FECHADO_GANHO'].count;
+  const lostCount = byStage['FECHADO_PERDIDO'].count;
+  const totalFinished = wonCount + lostCount;
+  const conversionRate = totalFinished > 0 ? Number(((wonCount / totalFinished) * 100).toFixed(2)) : 0;
+
+  return res.status(200).json({
+    totalCustomers,
+    openPipeline,
+    wonRevenue,
+    conversionRate,
+    wonCount,
+    lostCount,
+    byStage
+  });
+});
+
+// --- US08: Exportação de Relatório de Clientes e Vendas (CSV) ---
+app.get('/api/reports/export', authMiddleware, (req, res) => {
+  // Consulta consolidando todos os clientes e respetivas oportunidades (LEFT JOIN)
+  const rows = db.prepare(`
+    SELECT 
+      c.id as customer_id,
+      c.name as customer_name,
+      c.email as customer_email,
+      c.phone as customer_phone,
+      c.company as customer_company,
+      c.role as customer_role,
+      c.status as customer_status,
+      d.id as deal_id,
+      d.title as deal_title,
+      d.value as deal_value,
+      d.stage as deal_stage,
+      d.expected_close_date as deal_close_date
+    FROM customers c
+    LEFT JOIN deals d ON c.id = d.customer_id
+    ORDER BY c.id DESC, d.id DESC
+  `).all();
+
+  return res.status(200).json(rows);
+});
+
 app.listen(PORT, () => {
-  console.log(`Servidor CRM rodando em http://localhost:${PORT}`);
+  console.log(`Servidor CRM completo rodando em http://localhost:${PORT}`);
 });
