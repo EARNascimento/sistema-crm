@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const db = new Database('crm.db');
 
-// Inicialização das Tabelas (Etapa 1 + Etapa 2)
+// Inicialização das Tabelas (Etapas 1, 2 e 3)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,9 +46,20 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(id)
   );
+
+  CREATE TABLE IF NOT EXISTS interactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `);
 
-// Seed inicial do Usuário
+// Seed inicial do Utilizador
 const seedUser = db.prepare('SELECT * FROM users WHERE email = ?').get('admin@crm.com');
 if (!seedUser) {
   const hash = bcrypt.hashSync('123456', 10);
@@ -96,20 +107,18 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-// --- US02 & US03: Listagem com Busca/Filtro, Cadastro e Edição de Clientes ---
+// --- US02 & US03: Clientes ---
 app.get('/api/customers', authMiddleware, (req, res) => {
   const { search, status } = req.query;
   let query = 'SELECT * FROM customers WHERE 1=1';
   const params = [];
 
-  // RN02 US03: Busca textual por Nome, E-mail ou Empresa (case-insensitive)
   if (search && search.trim() !== '') {
     query += ' AND (name LIKE ? OR email LIKE ? OR company LIKE ?)';
     const term = `%${search.trim()}%`;
     params.push(term, term, term);
   }
 
-  // RN01 US03: Filtro por Status
   if (status && status.trim() !== '') {
     query += ' AND status = ?';
     params.push(status.trim());
@@ -142,7 +151,6 @@ app.post('/api/customers', authMiddleware, (req, res) => {
   return res.status(201).json(newCustomer);
 });
 
-// US03: Atualização de Cliente e Qualificação de Status
 app.put('/api/customers/:id', authMiddleware, (req, res) => {
   const { id } = req.params;
   const { name, email, phone, company, role, status } = req.body;
@@ -151,13 +159,11 @@ app.put('/api/customers/:id', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Nome, E-mail e Telefone são obrigatórios.' });
   }
 
-  // RN01 US03: Status permitidos
   const allowedStatus = ['LEAD', 'ATIVO', 'INATIVO'];
   if (status && !allowedStatus.includes(status)) {
     return res.status(400).json({ error: 'Status inválido. Use LEAD, ATIVO ou INATIVO.' });
   }
 
-  // Verifica se o e-mail pertence a outro cliente
   const existing = db.prepare('SELECT id FROM customers WHERE email = ? AND id != ?').get(email, id);
   if (existing) {
     return res.status(409).json({ error: 'Este e-mail já está em uso por outro cliente.' });
@@ -178,11 +184,10 @@ app.put('/api/customers/:id', authMiddleware, (req, res) => {
   return res.status(200).json(updated);
 });
 
-// --- US04: Gestão de Oportunidades Comerciais (Negócios) ---
+// --- US04 & US05: Oportunidades e Movimentação do Pipeline (Kanban) ---
 app.get('/api/deals', authMiddleware, (req, res) => {
-  // Abordagem Técnica US04: JOIN com nome do cliente
   const deals = db.prepare(`
-    SELECT d.*, c.name as customer_name, c.company as customer_company
+    SELECT d.*, c.name as customer_name, c.company as customer_company, c.status as customer_status
     FROM deals d
     JOIN customers c ON d.customer_id = c.id
     ORDER BY d.created_at DESC, d.id DESC
@@ -197,19 +202,16 @@ app.post('/api/deals', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Título, Valor e Cliente são obrigatórios.' });
   }
 
-  // RN02 US04: Valor numérico >= 0
   const numericValue = Number(value);
   if (isNaN(numericValue) || numericValue < 0) {
     return res.status(400).json({ error: 'O valor estimado deve ser numérico e maior ou igual a zero.' });
   }
 
-  // RN01 US04: Cliente deve existir no banco
   const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(customer_id);
   if (!customer) {
     return res.status(404).json({ error: 'Cliente vinculado não encontrado.' });
   }
 
-  // RN03 US04: Toda oportunidade inicia em PROSPECCAO
   const stmt = db.prepare(`
     INSERT INTO deals (title, value, stage, customer_id, expected_close_date)
     VALUES (?, ?, 'PROSPECCAO', ?, ?)
@@ -224,6 +226,104 @@ app.post('/api/deals', authMiddleware, (req, res) => {
   `).get(result.lastInsertRowid);
 
   return res.status(201).json(newDeal);
+});
+
+// US05: Atualização de estágio no Kanban com Transação Atómica (RN01 e RN02)
+app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
+  const { id } = req.params;
+  const { stage } = req.body;
+
+  const allowedStages = [
+    'PROSPECCAO',
+    'QUALIFICACAO',
+    'PROPOSTA',
+    'NEGOCIACAO',
+    'FECHADO_GANHO',
+    'FECHADO_PERDIDO'
+  ];
+
+  if (!stage || !allowedStages.includes(stage)) {
+    return res.status(400).json({ error: 'Estágio do funil inválido.' });
+  }
+
+  const deal = db.prepare('SELECT * FROM deals WHERE id = ?').get(id);
+  if (!deal) {
+    return res.status(404).json({ error: 'Oportunidade não encontrada.' });
+  }
+
+  // Abordagem Técnica US05: Transaction atómica para atualizar oportunidade + converter LEAD -> ATIVO
+  const updateStageTransaction = db.transaction((dealId, newStage, customerId) => {
+    db.prepare('UPDATE deals SET stage = ? WHERE id = ?').run(newStage, dealId);
+
+    let convertedLead = false;
+    if (newStage === 'FECHADO_GANHO') {
+      const cust = db.prepare('SELECT status FROM customers WHERE id = ?').get(customerId);
+      if (cust && cust.status === 'LEAD') {
+        db.prepare("UPDATE customers SET status = 'ATIVO' WHERE id = ?").run(customerId);
+        convertedLead = true;
+      }
+    }
+    return convertedLead;
+  });
+
+  const convertedLead = updateStageTransaction(id, stage, deal.customer_id);
+  const updatedDeal = db.prepare('SELECT * FROM deals WHERE id = ?').get(id);
+
+  return res.status(200).json({
+    deal: updatedDeal,
+    convertedLead
+  });
+});
+
+// --- US06: Histórico de Interações e Follow-up (Timeline) ---
+app.get('/api/customers/:id/interactions', authMiddleware, (req, res) => {
+  const { id } = req.params;
+
+  // RN02 US06: Ordenação cronológica reversa (do mais recente para o mais antigo)
+  const interactions = db.prepare(`
+    SELECT i.*, u.name as author_name
+    FROM interactions i
+    JOIN users u ON i.user_id = u.id
+    WHERE i.customer_id = ?
+    ORDER BY i.created_at DESC, i.id DESC
+  `).all(id);
+
+  return res.status(200).json(interactions);
+});
+
+app.post('/api/customers/:id/interactions', authMiddleware, (req, res) => {
+  const { id } = req.params;
+  const { type, description } = req.body;
+
+  // RN01 US06: Tipo válido e descrição obrigatória
+  const allowedTypes = ['LIGACAO', 'REUNIAO', 'EMAIL', 'NOTA'];
+  if (!type || !allowedTypes.includes(type)) {
+    return res.status(400).json({ error: 'Tipo de interação inválido. Use LIGACAO, REUNIAO, EMAIL ou NOTA.' });
+  }
+
+  if (!description || description.trim() === '') {
+    return res.status(400).json({ error: 'A descrição da interação é obrigatória.' });
+  }
+
+  const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(id);
+  if (!customer) {
+    return res.status(404).json({ error: 'Cliente não encontrado.' });
+  }
+
+  const stmt = db.prepare(`
+    INSERT INTO interactions (customer_id, user_id, type, description)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(id, req.user.id, type, description.trim());
+
+  const newInteraction = db.prepare(`
+    SELECT i.*, u.name as author_name
+    FROM interactions i
+    JOIN users u ON i.user_id = u.id
+    WHERE i.id = ?
+  `).get(result.lastInsertRowid);
+
+  return res.status(201).json(newInteraction);
 });
 
 app.listen(PORT, () => {

@@ -2,12 +2,12 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>CRM MVP - Etapa 2</title>
+  <title>CRM MVP - Etapa 3</title>
   <style>
     body { font-family: monospace, sans-serif; margin: 20px; background: #f4f4f4; color: #111; }
     .hidden { display: none !important; }
     .box { background: #fff; border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; }
-    input, select, button { padding: 6px 10px; margin: 4px 2px; font-family: inherit; }
+    input, select, button, textarea { padding: 6px 10px; margin: 4px 2px; font-family: inherit; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; }
     th, td { border: 1px solid #999; padding: 8px; text-align: left; }
     th { background: #eee; }
@@ -16,6 +16,18 @@
     .header-bar { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
     .filter-bar { background: #eef; padding: 10px; border: 1px dashed #669; margin-bottom: 10px; }
     .badge { padding: 2px 6px; border: 1px solid #333; font-size: 12px; background: #eee; }
+
+    /* Estilos básicos funcionais para o Kanban (US05) */
+    .kanban-board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 10px; }
+    .kanban-col { background: #e9e9e9; border: 1px solid #999; padding: 8px; min-height: 220px; }
+    .kanban-col-header { border-bottom: 2px solid #555; padding-bottom: 6px; margin-bottom: 8px; font-size: 12px; }
+    .kanban-card { background: #fff; border: 1px solid #666; padding: 8px; margin-bottom: 8px; font-size: 12px; }
+    .kanban-actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+    .kanban-actions button { padding: 3px 6px; font-size: 11px; cursor: pointer; }
+
+    /* Estilos básicos para a Timeline (US06) */
+    .timeline-box { border: 2px solid #222; background: #fffdf5; }
+    .timeline-item { border-left: 3px solid #333; padding-left: 10px; margin: 10px 0; background: #fff; border-top: 1px solid #ddd; border-right: 1px solid #ddd; border-bottom: 1px solid #ddd; padding: 8px; }
   </style>
 </head>
 <body>
@@ -43,7 +55,7 @@
   <div id="app-view" class="hidden">
     <div class="header-bar">
       <div>
-        <strong>CRM MVP - Etapa 2 (Clientes & Oportunidades)</strong> | Logado como: <span id="user-name"></span>
+        <strong>CRM MVP - Etapa 3 (Kanban & Timeline)</strong> | Logado como: <span id="user-name"></span>
       </div>
       <button onclick="logout()">Sair (Logout)</button>
     </div>
@@ -60,7 +72,6 @@
         <input type="text" id="cust-company" placeholder="Empresa (Opcional)">
         <input type="text" id="cust-role" placeholder="Cargo (Opcional)">
         
-        <!-- Campo de Status visível na Edição (US03 RN01) -->
         <select id="cust-status" class="hidden">
           <option value="LEAD">LEAD</option>
           <option value="ATIVO">ATIVO</option>
@@ -72,11 +83,10 @@
       </form>
     </div>
 
-    <!-- SEÇÃO 2: BUSCA, FILTRO E LISTAGEM DE CLIENTES (US02 & US03) -->
+    <!-- SEÇÃO 2: BUSCA, FILTRO E LISTAGEM DE CLIENTES + BOTÃO TIMELINE (US02, US03 & US06) -->
     <div class="box">
       <h3>Base de Clientes / Leads</h3>
       
-      <!-- Barra de Busca com Debounce e Filtro de Status (US03) -->
       <div class="filter-bar">
         <strong>Filtros (US03):</strong>
         <input type="text" id="search-input" placeholder="Buscar por Nome, E-mail ou Empresa..." style="width: 280px;">
@@ -99,16 +109,42 @@
             <th>Telefone</th>
             <th>Empresa / Cargo</th>
             <th>Status</th>
-            <th>Ações (US03)</th>
+            <th>Ações (US03 / US06)</th>
           </tr>
         </thead>
         <tbody id="customers-tbody"></tbody>
       </table>
     </div>
 
-    <!-- SEÇÃO 3: GESTÃO DE OPORTUNIDADES COMERCIAIS (US04) -->
+    <!-- SEÇÃO 3: HISTÓRICO DE INTERAÇÕES E FOLLOW-UP (US06) -->
+    <div id="timeline-section" class="box timeline-box hidden">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 id="timeline-title">Histórico de Interações / Timeline (US06)</h3>
+        <button type="button" onclick="closeTimeline()">Fechar Histórico [X]</button>
+      </div>
+      <div id="interaction-feedback"></div>
+      <form id="interaction-form">
+        <input type="hidden" id="interaction-cust-id">
+        <label><strong>Tipo (RN01):</strong></label>
+        <select id="interaction-type" required>
+          <option value="REUNIAO">REUNIAO</option>
+          <option value="LIGACAO">LIGACAO</option>
+          <option value="EMAIL">EMAIL</option>
+          <option value="NOTA">NOTA</option>
+        </select>
+        <br>
+        <textarea id="interaction-desc" rows="2" style="width: 98%;" placeholder="Descreva o resumo da ligação, reunião, e-mail ou anotação... *" required></textarea>
+        <br>
+        <button type="submit">Registrar na Timeline</button>
+      </form>
+
+      <h4>Linha do Tempo (Ordem Cronológica Reversa - Imutável RN02):</h4>
+      <div id="timeline-list"></div>
+    </div>
+
+    <!-- SEÇÃO 4: CRIAÇÃO DE OPORTUNIDADES (US04) -->
     <div class="box">
-      <h3>Oportunidades Comerciais / Negócios (US04)</h3>
+      <h3>Nova Oportunidade Comercial / Negócio (US04)</h3>
       <div id="deal-feedback"></div>
       <form id="deal-form">
         <select id="deal-customer" required>
@@ -120,20 +156,23 @@
         <input type="date" id="deal-date">
         <button type="submit" id="btn-save-deal">Criar Oportunidade</button>
       </form>
+    </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Título do Negócio</th>
-            <th>Cliente Vinculado (RN01)</th>
-            <th>Valor Estimado (RN02)</th>
-            <th>Estágio Atual (RN03)</th>
-            <th>Previsão Fechamento</th>
-          </tr>
-        </thead>
-        <tbody id="deals-tbody"></tbody>
-      </table>
+    <!-- SEÇÃO 5: PIPELINE KANBAN DE 5 COLUNAS (US05) -->
+    <div class="box">
+      <h3>Pipeline de Vendas - Quadro Kanban (US05)</h3>
+      <p><small>RN02: Ao mover um card para <b>FECHADO_GANHO</b>, o cliente vinculado com status <b>LEAD</b> é convertido automaticamente para <b>ATIVO</b>.</small></p>
+      <div id="kanban-feedback"></div>
+
+      <div class="kanban-board" id="kanban-board">
+        <!-- As 5 colunas fixas serão renderizadas via JS -->
+      </div>
+
+      <!-- Lista separada para negócios marcados como FECHADO_PERDIDO (RN01) -->
+      <div style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 10px;">
+        <strong>Oportunidades Marcadas como FECHADO_PERDIDO:</strong>
+        <div id="lost-deals-list" style="margin-top: 6px; font-size: 12px;"></div>
+      </div>
     </div>
   </div>
 
@@ -141,6 +180,19 @@
     const API_URL = '/api';
     let allCustomersCache = [];
     let debounceTimer = null;
+
+    // As 5 colunas fixas do Kanban (RN01 US05)
+    const KANBAN_STAGES = [
+      'PROSPECCAO',
+      'QUALIFICACAO',
+      'PROPOSTA',
+      'NEGOCIACAO',
+      'FECHADO_GANHO'
+    ];
+
+    function formatBRL(val) {
+      return Number(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    }
 
     // Controle de Sessão (US01)
     function checkAuth() {
@@ -192,10 +244,9 @@
       }
     });
 
-    // --- US02 & US03: Listagem, Filtro com Debounce e Edição de Clientes ---
+    // --- US02 & US03: Clientes ---
     document.getElementById('search-input').addEventListener('input', () => {
       clearTimeout(debounceTimer);
-      // Abordagem Técnica US03: Debounce de 300ms
       debounceTimer = setTimeout(() => {
         loadCustomers();
       }, 300);
@@ -236,7 +287,7 @@
         populateCustomerSelect();
 
         if (customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7">Nenhum cliente encontrado para os critérios informados.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7">Nenhum cliente encontrado.</td></tr>';
           return;
         }
 
@@ -251,6 +302,7 @@
             <td><span class="badge"><b>${c.status}</b></span></td>
             <td>
               <button type="button" onclick="startEditCustomer(${c.id})">Editar / Status</button>
+              <button type="button" onclick="openTimeline(${c.id}, '${c.name.replace(/'/g, "\\'")}')">Histórico / Timeline (US06)</button>
             </td>
           `;
           tbody.appendChild(tr);
@@ -262,7 +314,6 @@
       }
     }
 
-    // Atualiza o Select de clientes da US04 sempre que necessário
     async function populateCustomerSelect() {
       const token = localStorage.getItem('crm_token');
       const select = document.getElementById('deal-customer');
@@ -363,12 +414,100 @@
       }
     });
 
-    // --- US04: Gestão de Oportunidades (Negócios) ---
+    // --- US06: Histórico de Interações e Follow-up (Timeline) ---
+    async function openTimeline(customerId, customerName) {
+      document.getElementById('timeline-section').classList.remove('hidden');
+      document.getElementById('timeline-title').textContent = `Histórico de Interações - Cliente: ${customerName} (#${customerId})`;
+      document.getElementById('interaction-cust-id').value = customerId;
+      document.getElementById('interaction-feedback').textContent = '';
+      await loadInteractions(customerId);
+      document.getElementById('timeline-section').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeTimeline() {
+      document.getElementById('timeline-section').classList.add('hidden');
+      document.getElementById('interaction-form').reset();
+    }
+
+    async function loadInteractions(customerId) {
+      const token = localStorage.getItem('crm_token');
+      const listDiv = document.getElementById('timeline-list');
+      listDiv.innerHTML = 'Carregando histórico...';
+
+      try {
+        const res = await fetch(`${API_URL}/customers/${customerId}/interactions`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) {
+          listDiv.innerHTML = '<div class="msg-error">Erro ao buscar interações.</div>';
+          return;
+        }
+        const items = await res.json();
+
+        if (items.length === 0) {
+          listDiv.innerHTML = '<p><i>Nenhuma interação registrada para este cliente ainda.</i></p>';
+          return;
+        }
+
+        listDiv.innerHTML = '';
+        items.forEach(i => {
+          const itemDiv = document.createElement('div');
+          itemDiv.className = 'timeline-item';
+          itemDiv.innerHTML = `
+            <div>
+              <span class="badge"><b>${i.type}</b></span>
+              <small>em <b>${new Date(i.created_at).toLocaleString('pt-BR')}</b> por <b>${i.author_name}</b></small>
+            </div>
+            <div style="margin-top: 5px;">${i.description}</div>
+          `;
+          listDiv.appendChild(itemDiv);
+        });
+      } catch (err) {
+        listDiv.innerHTML = '<div class="msg-error">Falha de conexão.</div>';
+      }
+    }
+
+    document.getElementById('interaction-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const token = localStorage.getItem('crm_token');
+      const customerId = document.getElementById('interaction-cust-id').value;
+      const type = document.getElementById('interaction-type').value;
+      const description = document.getElementById('interaction-desc').value.trim();
+      const feedback = document.getElementById('interaction-feedback');
+
+      feedback.textContent = '';
+
+      try {
+        const res = await fetch(`${API_URL}/customers/${customerId}/interactions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ type, description })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          feedback.className = 'msg-error';
+          feedback.textContent = `Erro: ${data.error}`;
+        } else {
+          feedback.className = 'msg-success';
+          feedback.textContent = 'Interação registrada na Timeline com sucesso!';
+          document.getElementById('interaction-desc').value = '';
+          loadInteractions(customerId);
+        }
+      } catch (err) {
+        feedback.className = 'msg-error';
+        feedback.textContent = 'Erro ao salvar interação.';
+      }
+    });
+
+    // --- US04 & US05: Oportunidades e Quadro Kanban ---
     const dealValueInput = document.getElementById('deal-value');
     const btnSaveDeal = document.getElementById('btn-save-deal');
     const dealFeedback = document.getElementById('deal-feedback');
 
-    // CA02 US04: Validação de valor negativo bloqueando o botão e exibindo erro
     dealValueInput.addEventListener('input', () => {
       const val = parseFloat(dealValueInput.value);
       if (val < 0) {
@@ -380,44 +519,6 @@
         btnSaveDeal.disabled = false;
       }
     });
-
-    async function loadDeals() {
-      const token = localStorage.getItem('crm_token');
-      const tbody = document.getElementById('deals-tbody');
-      tbody.innerHTML = '';
-
-      try {
-        const res = await fetch(`${API_URL}/deals`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) return;
-        const deals = await res.json();
-
-        if (deals.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6">Nenhuma oportunidade comercial cadastrada.</td></tr>';
-          return;
-        }
-
-        deals.forEach(d => {
-          const formattedValue = Number(d.value).toLocaleString('pt-BR', {
-            style: 'currency',
-            currency: 'BRL'
-          });
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>#${d.id}</td>
-            <td><strong>${d.title}</strong></td>
-            <td>${d.customer_name} ${d.customer_company ? `(${d.customer_company})` : ''}</td>
-            <td><strong>${formattedValue}</strong></td>
-            <td><span class="badge">${d.stage}</span></td>
-            <td>${d.expected_close_date || '-'}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-      } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="6" class="msg-error">Erro ao carregar oportunidades.</td></tr>';
-      }
-    }
 
     document.getElementById('deal-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -453,7 +554,7 @@
           dealFeedback.textContent = `Erro (${res.status}): ${data.error}`;
         } else {
           dealFeedback.className = 'msg-success';
-          dealFeedback.textContent = `Oportunidade "${data.title}" criada no estágio ${data.stage}!`;
+          dealFeedback.textContent = `Oportunidade "${data.title}" adicionada na coluna ${data.stage}!`;
           document.getElementById('deal-form').reset();
           loadDeals();
         }
@@ -462,6 +563,119 @@
         dealFeedback.textContent = 'Falha ao salvar oportunidade.';
       }
     });
+
+    async function loadDeals() {
+      const token = localStorage.getItem('crm_token');
+      try {
+        const res = await fetch(`${API_URL}/deals`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const deals = await res.json();
+        renderKanban(deals);
+      } catch (err) {
+        console.error('Erro ao carregar negócios:', err);
+      }
+    }
+
+    function renderKanban(deals) {
+      const board = document.getElementById('kanban-board');
+      const lostList = document.getElementById('lost-deals-list');
+      board.innerHTML = '';
+      lostList.innerHTML = '';
+
+      // Renderiza as 5 colunas fixas (RN01 e RN03 US05)
+      KANBAN_STAGES.forEach((stage, idx) => {
+        const stageDeals = deals.filter(d => d.stage === stage);
+        const totalStageValue = stageDeals.reduce((acc, item) => acc + Number(item.value), 0);
+
+        const col = document.createElement('div');
+        col.className = 'kanban-col';
+        col.innerHTML = `
+          <div class="kanban-col-header">
+            <strong>${stage}</strong><br>
+            <span>Negócios: <b>${stageDeals.length}</b></span><br>
+            <span>Total: <b>${formatBRL(totalStageValue)}</b></span>
+          </div>
+          <div class="kanban-cards-container"></div>
+        `;
+
+        const container = col.querySelector('.kanban-cards-container');
+        stageDeals.forEach(d => {
+          const prevStage = idx > 0 ? KANBAN_STAGES[idx - 1] : null;
+          const nextStage = idx < KANBAN_STAGES.length - 1 ? KANBAN_STAGES[idx + 1] : null;
+
+          const card = document.createElement('div');
+          card.className = 'kanban-card';
+          card.innerHTML = `
+            <div><strong>#${d.id} - ${d.title}</strong></div>
+            <div>Cliente: ${d.customer_name}</div>
+            <div>Valor: <b>${formatBRL(d.value)}</b></div>
+            ${d.expected_close_date ? `<div><small>Prev: ${d.expected_close_date}</small></div>` : ''}
+            <div class="kanban-actions">
+              ${prevStage ? `<button type="button" onclick="moveDealStage(${d.id}, '${prevStage}')">&larr; ${prevStage}</button>` : ''}
+              ${nextStage ? `<button type="button" onclick="moveDealStage(${d.id}, '${nextStage}')">Avançar: ${nextStage} &rarr;</button>` : ''}
+              <button type="button" onclick="moveDealStage(${d.id}, 'FECHADO_PERDIDO')" style="color: #b00020;">Perder [X]</button>
+            </div>
+          `;
+          container.appendChild(card);
+        });
+
+        board.appendChild(col);
+      });
+
+      // Lista de negócios FECHADO_PERDIDO
+      const lostDeals = deals.filter(d => d.stage === 'FECHADO_PERDIDO');
+      if (lostDeals.length === 0) {
+        lostList.innerHTML = '<i>Nenhuma oportunidade perdida.</i>';
+      } else {
+        lostDeals.forEach(d => {
+          const item = document.createElement('div');
+          item.style.marginBottom = '4px';
+          item.innerHTML = `
+            <span>#${d.id} <b>${d.title}</b> (${d.customer_name}) - ${formatBRL(d.value)}</span>
+            <button type="button" onclick="moveDealStage(${d.id}, 'PROSPECCAO')" style="font-size: 11px; padding: 2px 6px;">Reabrir para PROSPECCAO</button>
+          `;
+          lostList.appendChild(item);
+        });
+      }
+    }
+
+    async function moveDealStage(dealId, newStage) {
+      const token = localStorage.getItem('crm_token');
+      const feedback = document.getElementById('kanban-feedback');
+      feedback.textContent = '';
+
+      try {
+        const res = await fetch(`${API_URL}/deals/${dealId}/stage`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ stage: newStage })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          feedback.className = 'msg-error';
+          feedback.textContent = `Erro ao mover card: ${data.error}`;
+        } else {
+          feedback.className = 'msg-success';
+          if (data.convertedLead) {
+            feedback.textContent = `Negócio #${dealId} movido para ${newStage}! (RN02: Cliente convertido automaticamente de LEAD para ATIVO!)`;
+          } else {
+            feedback.textContent = `Negócio #${dealId} movido para ${newStage}!`;
+          }
+          // Atualiza o Kanban e a tabela de clientes para refletir eventual conversão LEAD -> ATIVO
+          loadDeals();
+          loadCustomers();
+        }
+      } catch (err) {
+        feedback.className = 'msg-error';
+        feedback.textContent = 'Erro de conexão ao atualizar estágio.';
+      }
+    }
 
     checkAuth();
   </script>
