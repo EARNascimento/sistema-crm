@@ -1,0 +1,20 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Vendedor Demo",
+      "email": "admin@crm.com",
+      "password_hash": "$2a$10$FI35dcXdV.fcQWshUnwJoOBMigYAbv09thFHxRV06FXha5rcKZfBG",
+      "created_at": "2026-11-04T01:23:55.224Z"
+    }
+  ],
+  "customers": [],
+  "deals": [],
+  "interactions": [],
+  "counters": {
+    "users": 1,
+    "customers": 0,
+    "deals": 0,
+    "interactions": 0
+  }
+}

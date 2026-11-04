@@ -1,76 +1,67 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const Database = require('better-sqlite3');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = 'chave_secreta_crm_mvp_2026';
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const db = new Database('crm.db');
+// Caminho absoluto previsível (Resolve Ponto 3 e ambientes de nuvem/Vercel)
+const DB_FILE = process.env.VERCEL 
+  ? path.join('/tmp', 'crm_data.json') 
+  : path.join(__dirname, 'crm_data.json');
 
-// Inicialização das Tabelas (Todas as Sprints 1 a 4)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// Estrutura de Banco de Dados Local em JS Puro (Sem dependência nativa de C++)
+let db = {
+  users: [],
+  customers: [],
+  deals: [],
+  interactions: [],
+  counters: { users: 0, customers: 0, deals: 0, interactions: 0 }
+};
 
-  CREATE TABLE IF NOT EXISTS customers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    phone TEXT NOT NULL,
-    company TEXT,
-    role TEXT,
-    status TEXT DEFAULT 'LEAD',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+function loadDatabase() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const data = fs.readFileSync(DB_FILE, 'utf-8');
+      db = JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Iniciando base em memória');
+  }
 
-  CREATE TABLE IF NOT EXISTS deals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    value DECIMAL(10,2) NOT NULL,
-    stage TEXT DEFAULT 'PROSPECCAO',
-    customer_id INTEGER NOT NULL,
-    expected_close_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (customer_id) REFERENCES customers(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS interactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    type TEXT NOT NULL,
-    description TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (customer_id) REFERENCES customers(id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-`);
-
-// Seed inicial do Utilizador
-const seedUser = db.prepare('SELECT * FROM users WHERE email = ?').get('admin@crm.com');
-if (!seedUser) {
-  const hash = bcrypt.hashSync('123456', 10);
-  db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)').run(
-    'Vendedor Demo',
-    'admin@crm.com',
-    hash
-  );
+  // Seed do usuário inicial (US01)
+  if (!db.users.find(u => u.email === 'admin@crm.com')) {
+    db.counters.users++;
+    db.users.push({
+      id: db.counters.users,
+      name: 'Vendedor Demo',
+      email: 'admin@crm.com',
+      password_hash: bcrypt.hashSync('123456', 10),
+      created_at: new Date().toISOString()
+    });
+    saveDatabase();
+  }
 }
 
-// Middleware JWT (US01)
+function saveDatabase() {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+  } catch (err) {
+    // Em ambientes estritamente read-only, os dados persistem na memória da instância
+  }
+}
+
+loadDatabase();
+
+// Middleware de Autenticação JWT (US01)
 function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'Token não fornecido' });
@@ -92,41 +83,41 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(400).json({ error: 'Preencha e-mail e senha' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const user = db.users.find(u => u.email === email);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Credenciais inválidas' });
   }
 
   const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, {
-    expiresIn: '8h',
+    expiresIn: '8h'
   });
 
   return res.status(200).json({
     token,
-    user: { id: user.id, name: user.name, email: user.email },
+    user: { id: user.id, name: user.name, email: user.email }
   });
 });
 
 // --- US02 & US03: Clientes ---
 app.get('/api/customers', authMiddleware, (req, res) => {
   const { search, status } = req.query;
-  let query = 'SELECT * FROM customers WHERE 1=1';
-  const params = [];
+  let list = [...db.customers];
 
   if (search && search.trim() !== '') {
-    query += ' AND (name LIKE ? OR email LIKE ? OR company LIKE ?)';
-    const term = `%${search.trim()}%`;
-    params.push(term, term, term);
+    const term = search.trim().toLowerCase();
+    list = list.filter(c => 
+      (c.name && c.name.toLowerCase().includes(term)) ||
+      (c.email && c.email.toLowerCase().includes(term)) ||
+      (c.company && c.company.toLowerCase().includes(term))
+    );
   }
 
   if (status && status.trim() !== '') {
-    query += ' AND status = ?';
-    params.push(status.trim());
+    list = list.filter(c => c.status === status.trim());
   }
 
-  query += ' ORDER BY created_at DESC, id DESC';
-  const customers = db.prepare(query).all(...params);
-  return res.status(200).json(customers);
+  list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id);
+  return res.status(200).json(list);
 });
 
 app.post('/api/customers', authMiddleware, (req, res) => {
@@ -136,23 +127,30 @@ app.post('/api/customers', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Nome, E-mail e Telefone são obrigatórios.' });
   }
 
-  const existing = db.prepare('SELECT id FROM customers WHERE email = ?').get(email);
+  const existing = db.customers.find(c => c.email.toLowerCase() === email.toLowerCase());
   if (existing) {
     return res.status(409).json({ error: 'Já existe um cliente cadastrado com este e-mail.' });
   }
 
-  const stmt = db.prepare(`
-    INSERT INTO customers (name, email, phone, company, role, status)
-    VALUES (?, ?, ?, ?, ?, 'LEAD')
-  `);
-  const result = stmt.run(name, email, phone, company || '', role || '');
+  db.counters.customers++;
+  const newCustomer = {
+    id: db.counters.customers,
+    name: name.trim(),
+    email: email.trim(),
+    phone: phone.trim(),
+    company: company ? company.trim() : '',
+    role: role ? role.trim() : '',
+    status: 'LEAD',
+    created_at: new Date().toISOString()
+  };
 
-  const newCustomer = db.prepare('SELECT * FROM customers WHERE id = ?').get(result.lastInsertRowid);
+  db.customers.push(newCustomer);
+  saveDatabase();
   return res.status(201).json(newCustomer);
 });
 
 app.put('/api/customers/:id', authMiddleware, (req, res) => {
-  const { id } = req.params;
+  const id = parseInt(req.params.id, 10);
   const { name, email, phone, company, role, status } = req.body;
 
   if (!name || !email || !phone) {
@@ -164,35 +162,44 @@ app.put('/api/customers/:id', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Status inválido. Use LEAD, ATIVO ou INATIVO.' });
   }
 
-  const existing = db.prepare('SELECT id FROM customers WHERE email = ? AND id != ?').get(email, id);
-  if (existing) {
-    return res.status(409).json({ error: 'Este e-mail já está em uso por outro cliente.' });
-  }
-
-  const stmt = db.prepare(`
-    UPDATE customers
-    SET name = ?, email = ?, phone = ?, company = ?, role = ?, status = ?
-    WHERE id = ?
-  `);
-  const info = stmt.run(name, email, phone, company || '', role || '', status || 'LEAD', id);
-
-  if (info.changes === 0) {
+  const customerIndex = db.customers.findIndex(c => c.id === id);
+  if (customerIndex === -1) {
     return res.status(404).json({ error: 'Cliente não encontrado.' });
   }
 
-  const updated = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
-  return res.status(200).json(updated);
+  const existingOther = db.customers.find(c => c.email.toLowerCase() === email.toLowerCase() && c.id !== id);
+  if (existingOther) {
+    return res.status(409).json({ error: 'Este e-mail já está em uso por outro cliente.' });
+  }
+
+  db.customers[customerIndex] = {
+    ...db.customers[customerIndex],
+    name: name.trim(),
+    email: email.trim(),
+    phone: phone.trim(),
+    company: company ? company.trim() : '',
+    role: role ? role.trim() : '',
+    status: status || db.customers[customerIndex].status
+  };
+
+  saveDatabase();
+  return res.status(200).json(db.customers[customerIndex]);
 });
 
 // --- US04 & US05: Oportunidades e Kanban ---
 app.get('/api/deals', authMiddleware, (req, res) => {
-  const deals = db.prepare(`
-    SELECT d.*, c.name as customer_name, c.company as customer_company, c.status as customer_status
-    FROM deals d
-    JOIN customers c ON d.customer_id = c.id
-    ORDER BY d.created_at DESC, d.id DESC
-  `).all();
-  return res.status(200).json(deals);
+  const dealsWithCustomer = db.deals.map(d => {
+    const cust = db.customers.find(c => c.id === d.customer_id) || {};
+    return {
+      ...d,
+      customer_name: cust.name || 'Cliente Removido',
+      customer_company: cust.company || '',
+      customer_status: cust.status || ''
+    };
+  });
+
+  dealsWithCustomer.sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id);
+  return res.status(200).json(dealsWithCustomer);
 });
 
 app.post('/api/deals', authMiddleware, (req, res) => {
@@ -207,29 +214,33 @@ app.post('/api/deals', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'O valor estimado deve ser numérico e maior ou igual a zero.' });
   }
 
-  const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(customer_id);
+  const customer = db.customers.find(c => c.id === Number(customer_id));
   if (!customer) {
     return res.status(404).json({ error: 'Cliente vinculado não encontrado.' });
   }
 
-  const stmt = db.prepare(`
-    INSERT INTO deals (title, value, stage, customer_id, expected_close_date)
-    VALUES (?, ?, 'PROSPECCAO', ?, ?)
-  `);
-  const result = stmt.run(title.trim(), numericValue, customer_id, expected_close_date || null);
+  db.counters.deals++;
+  const newDeal = {
+    id: db.counters.deals,
+    title: title.trim(),
+    value: numericValue,
+    stage: 'PROSPECCAO',
+    customer_id: Number(customer_id),
+    expected_close_date: expected_close_date || null,
+    created_at: new Date().toISOString()
+  };
 
-  const newDeal = db.prepare(`
-    SELECT d.*, c.name as customer_name
-    FROM deals d
-    JOIN customers c ON d.customer_id = c.id
-    WHERE d.id = ?
-  `).get(result.lastInsertRowid);
+  db.deals.push(newDeal);
+  saveDatabase();
 
-  return res.status(201).json(newDeal);
+  return res.status(201).json({
+    ...newDeal,
+    customer_name: customer.name
+  });
 });
 
 app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
-  const { id } = req.params;
+  const id = parseInt(req.params.id, 10);
   const { stage } = req.body;
 
   const allowedStages = [
@@ -245,50 +256,49 @@ app.patch('/api/deals/:id/stage', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Estágio do funil inválido.' });
   }
 
-  const deal = db.prepare('SELECT * FROM deals WHERE id = ?').get(id);
-  if (!deal) {
+  const dealIndex = db.deals.findIndex(d => d.id === id);
+  if (dealIndex === -1) {
     return res.status(404).json({ error: 'Oportunidade não encontrada.' });
   }
 
-  const updateStageTransaction = db.transaction((dealId, newStage, customerId) => {
-    db.prepare('UPDATE deals SET stage = ? WHERE id = ?').run(newStage, dealId);
+  db.deals[dealIndex].stage = stage;
 
-    let convertedLead = false;
-    if (newStage === 'FECHADO_GANHO') {
-      const cust = db.prepare('SELECT status FROM customers WHERE id = ?').get(customerId);
-      if (cust && cust.status === 'LEAD') {
-        db.prepare("UPDATE customers SET status = 'ATIVO' WHERE id = ?").run(customerId);
-        convertedLead = true;
-      }
+  let convertedLead = false;
+  if (stage === 'FECHADO_GANHO') {
+    const custIndex = db.customers.findIndex(c => c.id === db.deals[dealIndex].customer_id);
+    if (custIndex !== -1 && db.customers[custIndex].status === 'LEAD') {
+      db.customers[custIndex].status = 'ATIVO';
+      convertedLead = true;
     }
-    return convertedLead;
-  });
+  }
 
-  const convertedLead = updateStageTransaction(id, stage, deal.customer_id);
-  const updatedDeal = db.prepare('SELECT * FROM deals WHERE id = ?').get(id);
+  saveDatabase();
 
   return res.status(200).json({
-    deal: updatedDeal,
+    deal: db.deals[dealIndex],
     convertedLead
   });
 });
 
 // --- US06: Histórico de Interações (Timeline) ---
 app.get('/api/customers/:id/interactions', authMiddleware, (req, res) => {
-  const { id } = req.params;
-  const interactions = db.prepare(`
-    SELECT i.*, u.name as author_name
-    FROM interactions i
-    JOIN users u ON i.user_id = u.id
-    WHERE i.customer_id = ?
-    ORDER BY i.created_at DESC, i.id DESC
-  `).all(id);
+  const customerId = parseInt(req.params.id, 10);
+  const items = db.interactions
+    .filter(i => i.customer_id === customerId)
+    .map(i => {
+      const user = db.users.find(u => u.id === i.user_id) || {};
+      return {
+        ...i,
+        author_name: user.name || 'Usuário'
+      };
+    })
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id);
 
-  return res.status(200).json(interactions);
+  return res.status(200).json(items);
 });
 
 app.post('/api/customers/:id/interactions', authMiddleware, (req, res) => {
-  const { id } = req.params;
+  const customerId = parseInt(req.params.id, 10);
   const { type, description } = req.body;
 
   const allowedTypes = ['LIGACAO', 'REUNIAO', 'EMAIL', 'NOTA'];
@@ -300,39 +310,33 @@ app.post('/api/customers/:id/interactions', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'A descrição da interação é obrigatória.' });
   }
 
-  const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(id);
+  const customer = db.customers.find(c => c.id === customerId);
   if (!customer) {
     return res.status(404).json({ error: 'Cliente não encontrado.' });
   }
 
-  const stmt = db.prepare(`
-    INSERT INTO interactions (customer_id, user_id, type, description)
-    VALUES (?, ?, ?, ?)
-  `);
-  const result = stmt.run(id, req.user.id, type, description.trim());
+  db.counters.interactions++;
+  const newInteraction = {
+    id: db.counters.interactions,
+    customer_id: customerId,
+    user_id: req.user.id,
+    type,
+    description: description.trim(),
+    created_at: new Date().toISOString()
+  };
 
-  const newInteraction = db.prepare(`
-    SELECT i.*, u.name as author_name
-    FROM interactions i
-    JOIN users u ON i.user_id = u.id
-    WHERE i.id = ?
-  `).get(result.lastInsertRowid);
+  db.interactions.push(newInteraction);
+  saveDatabase();
 
-  return res.status(201).json(newInteraction);
+  return res.status(201).json({
+    ...newInteraction,
+    author_name: req.user.name
+  });
 });
 
-// --- US07: Dashboard Gerencial e KPIs de Vendas ---
+// --- US07: Dashboard Gerencial ---
 app.get('/api/dashboard/summary', authMiddleware, (req, res) => {
-  // Total de Clientes
-  const totalCustomersRow = db.prepare('SELECT COUNT(*) as total FROM customers').get();
-  const totalCustomers = totalCustomersRow ? totalCustomersRow.total : 0;
-
-  // Agregação por estágio (SUM, COUNT, GROUP BY)
-  const stageRows = db.prepare(`
-    SELECT stage, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
-    FROM deals
-    GROUP BY stage
-  `).all();
+  const totalCustomers = db.customers.length;
 
   const allStages = [
     'PROSPECCAO',
@@ -348,26 +352,20 @@ app.get('/api/dashboard/summary', authMiddleware, (req, res) => {
     byStage[st] = { count: 0, total_value: 0 };
   });
 
-  stageRows.forEach(r => {
-    if (byStage[r.stage]) {
-      byStage[r.stage] = {
-        count: Number(r.count || 0),
-        total_value: Number(r.total_value || 0)
-      };
+  db.deals.forEach(d => {
+    if (byStage[d.stage]) {
+      byStage[d.stage].count++;
+      byStage[d.stage].total_value += Number(d.value || 0);
     }
   });
 
-  // RN01 US07: Receita Ganha = soma de FECHADO_GANHO
   const wonRevenue = byStage['FECHADO_GANHO'].total_value;
-
-  // RN02 US07: Pipeline em Aberto = soma de PROSPECCAO até NEGOCIACAO
   const openPipeline =
     byStage['PROSPECCAO'].total_value +
     byStage['QUALIFICACAO'].total_value +
     byStage['PROPOSTA'].total_value +
     byStage['NEGOCIACAO'].total_value;
 
-  // RN03 e CA02 US07: Taxa de Conversão (%) protegida contra divisão por zero (NaN)
   const wonCount = byStage['FECHADO_GANHO'].count;
   const lostCount = byStage['FECHADO_PERDIDO'].count;
   const totalFinished = wonCount + lostCount;
@@ -384,31 +382,66 @@ app.get('/api/dashboard/summary', authMiddleware, (req, res) => {
   });
 });
 
-// --- US08: Exportação de Relatório de Clientes e Vendas (CSV) ---
+// --- US08: Exportação CSV ---
 app.get('/api/reports/export', authMiddleware, (req, res) => {
-  // Consulta consolidando todos os clientes e respetivas oportunidades (LEFT JOIN)
-  const rows = db.prepare(`
-    SELECT 
-      c.id as customer_id,
-      c.name as customer_name,
-      c.email as customer_email,
-      c.phone as customer_phone,
-      c.company as customer_company,
-      c.role as customer_role,
-      c.status as customer_status,
-      d.id as deal_id,
-      d.title as deal_title,
-      d.value as deal_value,
-      d.stage as deal_stage,
-      d.expected_close_date as deal_close_date
-    FROM customers c
-    LEFT JOIN deals d ON c.id = d.customer_id
-    ORDER BY c.id DESC, d.id DESC
-  `).all();
+  const rows = [];
+  db.customers.forEach(c => {
+    const custDeals = db.deals.filter(d => d.customer_id === c.id);
+    if (custDeals.length === 0) {
+      rows.push({
+        customer_id: c.id,
+        customer_name: c.name,
+        customer_email: c.email,
+        customer_phone: c.phone,
+        customer_company: c.company,
+        customer_role: c.role,
+        customer_status: c.status,
+        deal_id: null,
+        deal_title: null,
+        deal_value: null,
+        deal_stage: null,
+        deal_close_date: null
+      });
+    } else {
+      custDeals.forEach(d => {
+        rows.push({
+          customer_id: c.id,
+          customer_name: c.name,
+          customer_email: c.email,
+          customer_phone: c.phone,
+          customer_company: c.company,
+          customer_role: c.role,
+          customer_status: c.status,
+          deal_id: d.id,
+          deal_title: d.title,
+          deal_value: d.value,
+          deal_stage: d.stage,
+          deal_close_date: d.expected_close_date
+        });
+      });
+    }
+  });
 
   return res.status(200).json(rows);
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor CRM completo rodando em http://localhost:${PORT}`);
-});
+// Tratamento explícito de porta ocupada (Resolve Ponto 2)
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
+    console.log(`Servidor CRM rodando em http://localhost:${PORT}`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[ERRO] A porta ${PORT} já está ocupada por outro processo.`);
+      console.error(`Finalize o processo anterior antes de iniciar novamente.`);
+      process.exit(1);
+    } else {
+      console.error('Erro no servidor:', err);
+      process.exit(1);
+    }
+  });
+}
+
+// Export para o runtime Serverless da Vercel
+module.exports = app;
