@@ -425,6 +425,11 @@ app.get('/api/reports/export', authMiddleware, (req, res) => {
   return res.status(200).json(rows);
 });
 
+// Entrega o index.html na rota principal
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Tratamento explícito de porta ocupada (Resolve Ponto 2)
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   const server = app.listen(PORT, () => {
